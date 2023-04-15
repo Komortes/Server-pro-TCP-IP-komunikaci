@@ -120,6 +120,8 @@ void handle_client(int new_client_socket)
 
     send_message(new_client_socket, "SERVER_MOVE");
     // Main loop for client communication
+    int previous_x = 0, previous_y = 0;
+    int obstacle_hit_count = 0;
     while (true)
     {
         string message = receive_message(new_client_socket);
@@ -127,30 +129,67 @@ void handle_client(int new_client_socket)
         string message_type;
         ss >> message_type;
 
-        if (message_type == "CLIENT_OK")
+        if (message_type == "OK")
         {
             int x, y;
             ss >> x >> y;
 
-            // Handle the robot's position update
-            // Decide the next movement command (SERVER_MOVE, SERVER_TURN_LEFT, SERVER_TURN_RIGHT)
-            // and send it to the client
+            // Check if the robot reached the target coordinate
+            if (x == 0 && y == 0)
+            {
+                send_message(new_client_socket, "SERVER_PICK_UP");
+            }
+            else
+            {
+                // If the robot's position has not changed, it has hit an obstacle
+                if (x == previous_x && y == previous_y)
+                {
+                    obstacle_hit_count++;
+                    if (obstacle_hit_count > 20)
+                    {
+                        close(new_client_socket);
+                        return;
+                    }
+                    send_message(new_client_socket, "SERVER_TURN_RIGHT");
+                }
+                else
+                {
 
-            send_message(new_client_socket, "SERVER_MOVE");
+                    // Update previous coordinates
+                    previous_x = x;
+                    previous_y = y;
+
+                    // Handle the robot's position update
+                    // Decide the next movement command (SERVER_MOVE, SERVER_TURN_LEFT, SERVER_TURN_RIGHT)
+                    // and send it to the client
+                    send_message(new_client_socket, "SERVER_MOVE");
+                }
+            }
         }
-        else if (message_type == "CLIENT_RECHARGING")
+        else if (message_type == "RECHARGING")
         {
             // Handle the robot recharging
         }
-        else if (message_type == "CLIENT_FULL_POWER")
+        else if (message_type == "FULL")
         {
-            // Handle the robot returning to full power
+            // Check if the message is "FULL POWER\a\b"
+            string power;
+            ss >> power;
+            if (power == "POWER")
+            {
+                // Handle the robot returning to full power
+            }
         }
         else if (message_type == "CLIENT_MESSAGE")
         {
             string client_message;
-            getline(ss, client_message);
+            getline(ss, client_message, '\a');
             // Handle the received secret message
+
+            // Send SERVER_LOGOUT to end communication
+            send_message(new_client_socket, "SERVER_LOGOUT");
+            close(new_client_socket);
+            return;
         }
         else
         {
