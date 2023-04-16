@@ -31,24 +31,20 @@ string receive_message(int new_client_socket)
     char buffer[BUFFER_SIZE] = {0};
     int read_bytes = read(new_client_socket, buffer, BUFFER_SIZE);
     buffer[read_bytes] = '\0';
-
     string received_message(buffer);
-
     // Remove the termination sequence '\a\b' from the received message
     size_t termination_pos = received_message.find("\a\b");
     if (termination_pos != string::npos)
     {
         received_message.erase(termination_pos);
     }
-
     return received_message;
 }
 
 void send_message(int new_client_socket, const string &message)
 {
-    // Add the termination sequence '\a\b' to the message
-    string message_with_termination = message + "\a\b";
-    send(new_client_socket, message_with_termination.c_str(), message_with_termination.length(), 0);
+
+    send(new_client_socket, message.c_str(), message.length(), 0);
 }
 
 uint16_t calculate_hash(const string &username)
@@ -56,12 +52,12 @@ uint16_t calculate_hash(const string &username)
     uint16_t sum = 0;
     for (const char &c : username)
     {
-        sum += static_cast<uint16_t>(c);
+        sum += static_cast<uint16_t>(static_cast<unsigned char>(c));
     }
-    return (sum * 1000) % 65536;
+    return ((sum * 1000) % 65536)+23000;
 }
 
-void client_authenticate(int new_client_socket)
+bool client_authenticate(int new_client_socket)
 {
     // CLIENT_USERNAME
     string client_username = receive_message(new_client_socket);
@@ -77,48 +73,52 @@ void client_authenticate(int new_client_socket)
     if (keys.find(client_key_id) == keys.end())
     {
         // Invalid Key ID, send SERVER_LOGIN_FAILED and close connection
-        send_message(new_client_socket, "300 LOGIN FAILED\a\b");
+        send_message(new_client_socket, "303 KEY OUT OF RANGE\a\b");
         close(new_client_socket);
-        return;
+        return false;
     }
-
     // Retrieve server and client keys for the given Key ID
     uint16_t server_key = keys[client_key_id].first;
     uint16_t client_key = keys[client_key_id].second;
 
     uint16_t username_hash = calculate_hash(client_username);
-
+    cout << username_hash << endl;
+    cout << server_key << endl;
     // Calculate server confirmation code
     uint16_t server_confirmation_code = (username_hash + server_key) % 65536;
-
+    cout << server_confirmation_code << endl;
     // SERVER_CONFIRMATION
-    send_message(new_client_socket, to_string(server_confirmation_code) + "\a\b");
-
+    string conf = to_string(server_confirmation_code) + "\a\b";
+    send_message(new_client_socket, conf);
     // CLIENT_CONFIRMATION
     string client_confirmation = receive_message(new_client_socket);
-    uint16_t client_confirmation_code = stoul(client_confirmation);
-
+    cout << client_confirmation << endl;
+    uint16_t client_confirmation_code = static_cast<uint16_t>(stoi(client_confirmation));
     // Calculate expected client confirmation code
     uint16_t expected_client_confirmation_code = (username_hash + client_key) % 65536;
-
     if (client_confirmation_code == expected_client_confirmation_code)
     {
         // SERVER_OK
         send_message(new_client_socket, "200 OK\a\b");
+        return true;
     }
     else
     {
         // SERVER_LOGIN_FAILED
         send_message(new_client_socket, "300 LOGIN FAILED\a\b");
+        return false;
     }
 }
 
 void handle_client(int new_client_socket)
 {
     // Authentication process
-    client_authenticate(new_client_socket);
-
-    send_message(new_client_socket, "SERVER_MOVE");
+    if(!client_authenticate(new_client_socket)){
+        close(new_client_socket);
+        return;
+    }
+    cout << "AAAAAAA" << endl;
+    send_message(new_client_socket, "102 MOVE\a\b");
     // Main loop for client communication
     int previous_x = 0, previous_y = 0;
     int obstacle_hit_count = 0;
@@ -137,7 +137,7 @@ void handle_client(int new_client_socket)
             // Check if the robot reached the target coordinate
             if (x == 0 && y == 0)
             {
-                send_message(new_client_socket, "SERVER_PICK_UP");
+                send_message(new_client_socket, "105 GET MESSAGE\a\b");
             }
             else
             {
@@ -150,7 +150,7 @@ void handle_client(int new_client_socket)
                         close(new_client_socket);
                         return;
                     }
-                    send_message(new_client_socket, "SERVER_TURN_RIGHT");
+                    send_message(new_client_socket, "104 TURN RIGHT\a\b");
                 }
                 else
                 {
@@ -162,7 +162,7 @@ void handle_client(int new_client_socket)
                     // Handle the robot's position update
                     // Decide the next movement command (SERVER_MOVE, SERVER_TURN_LEFT, SERVER_TURN_RIGHT)
                     // and send it to the client
-                    send_message(new_client_socket, "SERVER_MOVE");
+                    send_message(new_client_socket, "102 MOVE\a\b");
                 }
             }
         }
@@ -180,20 +180,16 @@ void handle_client(int new_client_socket)
                 // Handle the robot returning to full power
             }
         }
-        else if (message_type == "CLIENT_MESSAGE")
+        else
         {
             string client_message;
             getline(ss, client_message, '\a');
             // Handle the received secret message
 
             // Send SERVER_LOGOUT to end communication
-            send_message(new_client_socket, "SERVER_LOGOUT");
+            send_message(new_client_socket, "106 LOGOUT\a\b");
             close(new_client_socket);
             return;
-        }
-        else
-        {
-            // Handle unknown or unexpected messages
         }
     }
 }
@@ -202,19 +198,19 @@ int main(int argc, char **argv)
 {
     sockaddr_in address;
     int server, new_client_socket, port;
-    char buffer[BUFFER_SIZE] = {0};
+    cout << "1" << endl;
     if (argc < 2)
     {
         perror("Usage: server port");
         exit(EXIT_FAILURE);
     }
-
+    cout << "2" << endl;
     if ((server = socket(AF_INET, SOCK_STREAM, 0)) == 0)
     {
         perror("Socket failed");
         exit(EXIT_FAILURE);
     }
-
+    cout << "3" << endl;
     port = atoi(argv[1]);
     if (port == 0)
     {
@@ -222,7 +218,7 @@ int main(int argc, char **argv)
         perror("Usage: server port");
         exit(EXIT_FAILURE);
     }
-
+    cout << "4" << endl;
     bzero(&address, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons(port);
