@@ -113,8 +113,8 @@ vector<char> receive_message(ClientData &client)
     vector<char> partial_message = client.partial_message;
     bool awaiting_ab = client.last_awaiting;
     auto last_communication_time = chrono::steady_clock::now();
-    auto waiting_start = chrono::steady_clock::now(); // Добавьте начальное время ожидания
-                                                      // Добавьте флаг для отслеживания состояния ожидания
+    auto waiting_start = chrono::steady_clock::now(); 
+
 
     while (true)
     {
@@ -130,7 +130,7 @@ vector<char> receive_message(ClientData &client)
                 if (awaiting_ab && buffer[i] == '\b')
                 {
                     lenght_c++;
-                    partial_message.pop_back(); // Удаление '\a'
+                    partial_message.pop_back(); 
 
                     string message(partial_message.begin(), partial_message.end());
                     vector<regex> patterns;
@@ -201,7 +201,6 @@ vector<char> receive_message(ClientData &client)
                             client.messages.push(vector<char>(message.begin(), message.end()));
                         }
 
-                        // Если после аб что-то осталось, начинаем записывать следующее сообщение
                         if (i < read_bytes - 1)
                         {
                             lenght_c = 0;
@@ -254,7 +253,6 @@ vector<char> receive_message(ClientData &client)
                 return vector<char>();
             }
 
-            // Проверьте, не превышено ли время ожидания
             if (client.us_st == State::Wait)
             {
                 auto elapsed_waiting_time = chrono::duration_cast<chrono::milliseconds>(now - waiting_start);
@@ -302,7 +300,6 @@ uint16_t calculate_hash(const vector<char> &username)
 
 bool client_authenticate(ClientData &client_data)
 {
-    // CLIENT_USERNAME
     client_data.cur = Phase::Auth;
     vector<char> client_username = receive_message(client_data);
     string client_username_str(client_username.begin(), client_username.end());
@@ -313,10 +310,9 @@ bool client_authenticate(ClientData &client_data)
         return false;
     }
 
-    // SERVER_KEY_REQUEST
     send_message(client_data.socket, "107 KEY REQUEST\a\b");
     client_data.cur = Phase::Codes;
-    // CLIENT_KEY_ID
+
     vector<char> client_key_id_vec = receive_message(client_data);
     if (client_key_id_vec.empty())
     {
@@ -327,25 +323,19 @@ bool client_authenticate(ClientData &client_data)
     string client_key_id_str(client_key_id_vec.begin(), client_key_id_vec.end());
     uint16_t client_key_id = stoul(client_key_id_str);
 
-    // Check if the provided Key ID exists in the keys map
     if (keys.find(client_key_id) == keys.end())
     {
-        // Invalid Key ID, send SERVER_LOGIN_FAILED and close connection
         send_message(client_data.socket, "303 KEY OUT OF RANGE\a\b");
         close(client_data.socket);
         return false;
     }
-    // Retrieve server and client keys for the given Key ID
     uint16_t server_key = keys[client_key_id].first;
     uint16_t client_key = keys[client_key_id].second;
 
     uint16_t username_hash = calculate_hash(client_username);
-    // Calculate server confirmation code
     uint16_t server_confirmation_code = (username_hash + server_key) % 65536;
-    // SERVER_CONFIRMATION
     string conf = to_string(server_confirmation_code) + "\a\b";
     send_message(client_data.socket, conf);
-    // CLIENT_CONFIRMATION
     vector<char> client_confirmation = receive_message(client_data);
     if (client_confirmation.empty())
     {
@@ -357,17 +347,14 @@ bool client_authenticate(ClientData &client_data)
 
     stringstream ss(client_confirmation_str);
     ss >> client_confirmation_code;
-    // Calculate expected client confirmation code
     uint16_t expected_client_confirmation_code = (username_hash + client_key) % 65536;
     if (client_confirmation_code == expected_client_confirmation_code)
     {
-        // SERVER_OK
         send_message(client_data.socket, "200 OK\a\b");
         return true;
     }
     else
     {
-        // SERVER_LOGIN_FAILED
         send_message(client_data.socket, "300 LOGIN FAILED\a\b");
         return false;
     }
@@ -375,7 +362,6 @@ bool client_authenticate(ClientData &client_data)
 
 void handle_client(ClientData client_data)
 {
-    // Authentication process
     if (!client_authenticate(client_data))
     {
         close(client_data.socket);
@@ -383,14 +369,10 @@ void handle_client(ClientData client_data)
     }
     client_data.cur = Phase::Moving;
     send_message(client_data.socket, "102 MOVE\a\b");
-    // Main loop for client communication
     int previous_x = 0, previous_y = 0;
     int obstacle_hit_count = 0;
-    bool obstacle_mode = false;
     bool turn = false;
-    bool is_recharging = false;
     chrono::steady_clock::time_point recharging_start;
-    int move_count = 0;
     Direction cur_dir = Direction::NONE;
 
     while (true)
@@ -403,6 +385,7 @@ void handle_client(ClientData client_data)
 
         if (message_type == "OK")
         {
+
             int x, y;
             ss >> x >> y;
             if (x == 0 && y == 0)
@@ -431,11 +414,18 @@ void handle_client(ClientData client_data)
                     receive_message(client_data);
                     send_message(client_data.socket, "102 MOVE\a\b");
                     receive_message(client_data);
-                    send_message(client_data.socket, "103 TURN LEFT\a\b");
-                    receive_message(client_data);
-                    send_message(client_data.socket, "102 MOVE\a\b");
-                    receive_message(client_data);
-                    send_message(client_data.socket, "104 TURN RIGHT\a\b");
+                    if (y == 0 || x == 0)
+                    {
+                        send_message(client_data.socket, "103 TURN LEFT\a\b");
+                        receive_message(client_data);
+                        send_message(client_data.socket, "102 MOVE\a\b");
+                        receive_message(client_data);
+                        send_message(client_data.socket, "104 TURN RIGHT\a\b");
+                    }
+                    else
+                    {
+                        send_message(client_data.socket, "102 MOVE\a\b");
+                    }
                 }
                 else
                 {
@@ -460,15 +450,8 @@ void handle_client(ClientData client_data)
                         }
                     }
 
-                    // Update previous coordinates
                     previous_x = x;
                     previous_y = y;
-                    // Handle the robot's position update
-                    // Decide the next movement command (SERVER_MOVE, SERVER_TURN_LEFT, SERVER_TURN_RIGHT)
-                    // and send it to the client
-
-                    // Determine the direction closer to the target
-                    string comand;
                     if (x > 0)
                     {
                         if (cur_dir == Direction::RIGHT)
@@ -588,9 +571,6 @@ void handle_client(ClientData client_data)
         {
             string client_message;
             getline(ss, client_message, '\a');
-            // Handle the received secret message
-
-            // Send SERVER_LOGOUT to end communication
             send_message(client_data.socket, "106 LOGOUT\a\b");
             close(client_data.socket);
             return;
